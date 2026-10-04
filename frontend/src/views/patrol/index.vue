@@ -63,6 +63,58 @@
       </tbody>
     </table>
 
+    <section class="review-section">
+      <header class="review-head">
+        <div>
+          <h3>工器具复核台账</h3>
+          <p class="page-desc">工器具送检结论与报废销账结论均落到此处，与安全工器具台账的在册数量对账。</p>
+        </div>
+        <button class="btn ghost" type="button" @click="runReconcile">重新对账</button>
+      </header>
+
+      <div class="stat-row">
+        <article class="stat-card">
+          <span class="stat-label">工器具台账在册</span>
+          <strong class="stat-value">{{ reconcile?.toolingActive ?? '—' }}</strong>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">复核台账在册</span>
+          <strong class="stat-value" :class="reconcile && !reconcile.ok ? 'error-text' : ''">
+            {{ reconcile?.reviewActive ?? '—' }}
+          </strong>
+        </article>
+        <article class="stat-card" v-for="item in reconcile?.byStation ?? []" :key="item.station">
+          <span class="stat-label">{{ item.station }}在册（台账/复核）</span>
+          <strong class="stat-value" :class="item.toolingActive !== item.reviewActive ? 'error-text' : ''">
+            {{ item.toolingActive }} / {{ item.reviewActive }}
+          </strong>
+        </article>
+      </div>
+
+      <p class="status-tip" :class="reconcile?.ok ? 'ok-text' : 'error-text'">
+        {{ reconcile?.message ?? '尚未对账' }}
+      </p>
+      <ul v-if="reconcile && !reconcile.ok" class="issue-list">
+        <li v-for="(issue, index) in reconcile.issues" :key="index" class="error-text">{{ issue }}</li>
+      </ul>
+
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th v-for="column in reviewColumns" :key="column">{{ column }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="item in reviewRows" :key="item.id" :class="{ 'row-readonly': item.在册状态 === '已销账' }">
+            <td v-for="column in reviewColumns" :key="column">{{ item[column] ?? '—' }}</td>
+          </tr>
+          <tr v-if="!reviewRows.length">
+            <td :colspan="reviewColumns.length" class="empty-state">复核台账暂无记录</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
     <footer class="page-foot">
       <span>共 {{ total }} 条巡视检查记录</span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
@@ -79,7 +131,8 @@ import {
   moduleMeta,
   runAction as applyAction,
 } from '@/api/local-service'
-import type { EntryRow } from '@/data/types'
+import { listReviewLedger, reconcileTooling } from '@/data/tooling'
+import type { EntryRow, ToolReconcileResult, ToolReviewRow } from '@/data/types'
 
 const meta = moduleMeta('patrol')
 const columns = ["巡视单号", "巡视路线", "巡视人员", "巡视日期", "检查项数", "异常项数", "巡视时长", "巡视状态"]
@@ -87,17 +140,39 @@ const actions = ["开始巡视", "提交复核", "确认完成"]
 const statuses = ["待巡视", "巡视中", "待复核", "已完成"]
 const stats = [{"label": "今日巡视单", "value": 0}, {"label": "巡视中记录", "value": 0}, {"label": "发现异常项", "value": 0}]
 
+const reviewColumns = [
+  "工器具编号",
+  "名称规格",
+  "所在电站",
+  "保管人员",
+  "试验类别",
+  "试验日期",
+  "下次试验日",
+  "试验周期",
+  "在册状态",
+  "复核结论",
+  "复核日期",
+  "来源",
+] as const
+
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
+const reviewRows = ref<ToolReviewRow[]>([])
+const reconcile = ref<ToolReconcileResult | null>(null)
 const statusSummary = computed(() =>
   statuses.map((status: string) => ({
     status,
     count: rows.value.filter((row) => String(row.status) === status).length,
   })),
 )
+
+function runReconcile() {
+  reviewRows.value = listReviewLedger().slice().reverse()
+  reconcile.value = reconcileTooling()
+}
 
 function resetFilters() {
   filters.value = {}
@@ -128,6 +203,7 @@ function reload() {
     const payload = listEntries(meta.key, filters.value)
     rows.value = payload.items
     total.value = payload.total
+    runReconcile()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '巡视检查列表读取失败'
   }
